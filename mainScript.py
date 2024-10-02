@@ -2,110 +2,107 @@
 
 import RPi.GPIO as GPIO
 from time import sleep
+import time
 
-in1 = 13 
-in2 = 19
-enA = 26
-
-in3 = 16
-in4 = 20
-enB = 21
 
 GPIO.setmode(GPIO.BCM)
 
-
-GPIO.setup(in1, GPIO.OUT)
-GPIO.setup(in2, GPIO.OUT)
-GPIO.setup(enA, GPIO.OUT)
-GPIO.setup(in3, GPIO.OUT)
-GPIO.setup(in4, GPIO.OUT)   
-GPIO.setup(enB, GPIO.OUT)
-
-
-pwmA = GPIO.PWM(enA, 50)
-pwmA.start(0)
-
-pwmB = GPIO.PWM(enB, 50)
-pwmB.start(0)
-
-
-def turnRight(speed: int):
-    GPIO.output(in1, GPIO.LOW)
-    GPIO.output(in2, GPIO.HIGH)
-    pwmA.ChangeDutyCycle(speed)
-    
-    GPIO.output(in3, GPIO.HIGH)
-    GPIO.output(in4, GPIO.LOW)
-    pwmB.ChangeDutyCycle(speed)
-    print("turn right")
-
-def turnLeft(speed: int):
-    GPIO.output(in1, GPIO.HIGH)
-    GPIO.output(in2, GPIO.LOW)
-    pwmA.ChangeDutyCycle(speed)
-    
-    GPIO.output(in3, GPIO.LOW)
-    GPIO.output(in4, GPIO.HIGH)
-    pwmB.ChangeDutyCycle(speed)
-    print("turn left")
-
-def goForward(speed: int):
-    GPIO.output(in1, GPIO.HIGH)
-    GPIO.output(in2, GPIO.LOW)
-    pwmA.ChangeDutyCycle(speed)
-    
-    GPIO.output(in3, GPIO.HIGH)
-    GPIO.output(in4, GPIO.LOW)
-    pwmB.ChangeDutyCycle(speed)
-    print("go forward")
-    
-def goBackward(speed):
-    GPIO.output(in1, GPIO.LOW)
-    GPIO.output(in2, GPIO.HIGH)
-    pwmA.ChangeDutyCycle(speed)
-    
-    GPIO.output(in3, GPIO.LOW)
-    GPIO.output(in4, GPIO.HIGH)
-    pwmB.ChangeDutyCycle(speed)
-    print("go forward")
-
-def stop():
-    pwmB.ChangeDutyCycle(0)
-    pwmA.ChangeDutyCycle(0)
-    
-    
-def checkpoint():
-    print("make map of the walls near you")
-    
 desiredDist = 5.6 #desired distance from the right wall in centimeters
 lastCheckpointDist = 0 #will be used to make new checkpoints. It will allow making a map of the maze, maybe...
 sizeOfOneSquere = 25
 
-
-def decidionPoint(frontDist: int, rightDist: int, leftDist: int, rearDist: int):
-   
-    if (rightDist > desiredDist):
-        turnRight(100) 
-    elif (frontDist < 10):
-        turnLeft(100)
+class Motor:
+    def __init__(self, firstPin, secondPin, enablePin,):
+        self.firstPin = firstPin
+        self.secondPin = secondPin
+        self.enablePin = enablePin  
+        self.currentSpeed = 0
         
-    if (frontDist >= 10):
-        goForward(100)
+        GPIO.setup(self.firstPin, GPIO.OUT)
+        GPIO.setup(self.secondPin, GPIO.OUT)
+        GPIO.setup(self.enablePin, GPIO.OUT)
         
-    if (rearDist - lastCheckpointDist > sizeOfOneSquere):
-        checkpoint()
-        lastCheckpointDist = rearDist
+        self.pwm = GPIO.PWM(enablePin, 50)
+        self.pwm.start(0)
+        
+    def forward(self, speed):
+        GPIO.output(self.firstPin, GPIO.HIGH)
+        GPIO.output(self.secondPin, GPIO.LOW)
+        self.pwm.ChangeDutyCycle(speed)
+        self.currentSpeed = speed
             
+    def backward(self, speed):
+        GPIO.output(self.firstPin, GPIO.LOW)
+        GPIO.output(self.secondPin, GPIO.HIGH)
+        self.pwm.ChangeDutyCycle(speed)
+        self.currentSpeed = -1*speed
+  
+        
+    def stop(self):
+        self.pwm.ChangeDutyCycle(0)  
+        
+class Sonar:
+    def __init__(self, echoPin, trigPin):
+        self._echoPin = echoPin
+        self._trigPin = trigPin
+        self.pulseTime = 0
 
-# Test the functions
+    def thereIsEcho(self):
+        return GPIO.input(self._echoPin)
+    
+    def pulse(self):
+        GPIO.output(self._trigPin, GPIO.HIGH)
+        self.pulseTime = time.time()
+        sleep(0.00001)  # 10 microseconds
+        GPIO.output(self._trigPin, GPIO.LOW)
+        
+    
+    def calculateDist(self):
+        stopTime = time.time()
+        elapsedTime = stopTime - self.pulseTime
+        return ((elapsedTime * 34300) / 2)
+
+
+sensors = [
+    Sonar(6,5),
+    Sonar(27, 17),
+    Sonar(23, 22),
+    Sonar(25, 24),
+]
+
+rightMotor = Motor(13, 19, 26)
+leftMotor = Motor(16, 20, 21)
+
+sleep(1)
+
+distances = [0,0,0,0]
+
+def checkpoint():
+    print("make map of the walls near you")
+    
 try:
-    goForward(100)
-    sleep(2)  # Use shorter sleep for testing
-    turnLeft(100)
-    sleep(2)
-    turnRight(100)
-    sleep(2)
-finally:
-    stop()
-    GPIO.cleanup()  # Cleanup GPIO pins
+    while True:
+        for i in sensors:
+            ping = sensors[i].thereIsEcho()
+            if ping:
+                distances[i] = sensors[i].calculateDist()
+                print(f" Sonar {i} measured {distances[i]} centimeters")
+        if distances[1] < desiredDist: #assuming 1 is the front-facing sonar
+            leftMotor.backward(100)
+            rightMotor.forward(100)
+        elif distances[0] > desiredDist: #assuming 0 is the right-facing sonar
+            leftMotor.forward(100)
+            rightMotor.backward(100)      
+        elif distances[1] > 10: #assuming 1 is the front-facing sonar
+            leftMotor.forward(100)
+            rightMotor.forward(100)
+            
+        if distances[3] - lastCheckpointDist > sizeOfOneSquere: #assuming 3 is the rear-facing sonar
+            checkpoint()
+            lastCheckpointDist = distances[3]
 
+except KeyboardInterrupt    :
+    print("Keyboard interuption")
+    
+finally:
+    GPIO.cleanup()
